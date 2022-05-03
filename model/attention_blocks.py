@@ -45,31 +45,6 @@ class RecursiveSqueezeExciteBlock(nn.Module):
         return out
 
 
-class RecursiveSqueezeExciteBlock_V2(nn.Module):
-    def __init__(self, in_features, reduction=16, rec=3):
-        nn.Module.__init__(self)
-        self.rec = rec
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(nn.Linear(in_features, int(in_features // reduction), bias=True),
-                                nn.ReLU(inplace=True),
-                                nn.Linear(int(in_features // reduction), in_features, bias=True),
-                                )
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        out = x
-        y = self.avgpool(out).view(b, c)
-
-        for i in range(self.rec):
-            y = self.fc(y)
-
-        y = y.view(b, c, 1, 1)
-        out = x * y.expand_as(x)
-
-        return out
-
-
 class ChannelAttention(nn.Module):
     def __init__(self, in_features, reduction=16, rec=1):
         super(ChannelAttention, self).__init__()
@@ -130,90 +105,6 @@ class CBAM(nn.Module):
         c_att = self.c_att(x)
         s_att = self.s_att(c_att)
         return s_att
-
-
-class SPSE(nn.Module):
-    def __init__(self, in_features, H, W, reduction=16, rate=None):
-        super(SPSE, self).__init__()
-        if rate is None:
-            rate = [1, 2, 4]
-        self.sp1 = nn.MaxPool2d(kernel_size=(H // rate[0], W // rate[0]),
-                                stride=(H // rate[0], W // rate[0]))
-        self.sp2 = nn.MaxPool2d(kernel_size=(H // rate[1], W // rate[1]),
-                                stride=(H // rate[1], W // rate[1]))
-        self.sp3 = nn.MaxPool2d(kernel_size=(H // rate[2], W // rate[2]),
-                                stride=(H // rate[2], W // rate[2]))
-        self.fusion = nn.ModuleList(nn.Linear(in_features=21, out_features=1, bias=True)
-                                    for _ in range(in_features))
-        self.fc = nn.Sequential(nn.Linear(in_features, int(in_features // reduction), bias=True),
-                                nn.ReLU(inplace=True),
-                                nn.Linear(int(in_features // reduction), in_features, bias=True),
-                                )
-        self.sigmoid = nn.Sigmoid()
-
-
-    def forward(self, x):
-        x_init = x
-        b, c, _, _ = x.size()
-        p1 = self.sp1(x)
-        p2 = self.sp2(x)
-        p3 = self.sp3(x)
-        p = torch.cat((p1.view(p1.shape[0], p1.shape[1], p1.shape[2]*p1.shape[3], 1),
-                       p2.view(p2.shape[0], p2.shape[1], p2.shape[2]*p2.shape[3], 1),
-                       p3.view(p3.shape[0], p3.shape[1], p3.shape[2]*p3.shape[3], 1)), dim=2)
-        f = []
-        for i in range(self.fusion.__len__()):
-            f.append(self.fusion[i](p[:, i, :, 0]))
-
-        fused = torch.cat(f, dim=1)
-        out = self.fc(fused).view(b, c, 1, 1)
-        out = x_init * out.expand_as(x_init)
-        return out
-
-class RGSE(nn.Module):
-    def __init__(self, in_features, H, W, K=7, reduction=16):
-        super(RGSE, self).__init__()
-        self.avgpool = nn.AvgPool2d(kernel_size=(K, K))
-
-        self.fusion = nn.ModuleList(nn.Linear(in_features=(H // K) * (W // K), out_features=1, bias=True)
-                                    for _ in range(in_features))
-        self.fc = nn.Sequential(nn.Linear(in_features, int(in_features // reduction), bias=True),
-                                nn.ReLU(inplace=True),
-                                nn.Linear(int(in_features // reduction), in_features, bias=True),
-                                )
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        x_init = x
-        b, c, _, _ = x.size()
-        p_init = self.avgpool(x)
-        p = p_init.view(b, c, p_init.shape[2] * p_init.shape[3], 1)
-        f = []
-        for i in range(self.fusion.__len__()):
-            f.append(self.fusion[i](p[:, i, :, 0]))
-
-        fused = torch.cat(f, dim=1)
-        out = self.fc(fused).view(b, c, 1, 1)
-        out = x_init * out.expand_as(x_init)
-        return out
-
-class EcaNetwork(nn.Module):
-    def __init__(self):
-        super(EcaNetwork, self).__init__()
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.conv = nn.Conv1d(in_channels=1,
-                              out_channels=1,
-                              kernel_size=(3, 3),
-                              padding=(1, 1),
-                              stride=(1, 1))
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        x_init = x
-        x = self.avgpool(x)
-        x = self.conv(x.squeeze(3).permute(0, 2, 1))
-        x = self.sigmoid(x).permute(0, 2, 1).unsqueeze(2)
-        return x_init * x.expand_as(x_init)
 
 
 class A2Nework(nn.Module):
